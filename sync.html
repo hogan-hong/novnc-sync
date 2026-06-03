@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>NoVNC 同步器</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  background: #101820;
+  color: #f4f7fb;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部工具栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  padding: 12px 20px;
+  background: #172331;
+  border-bottom: 1px solid #2a3a4e;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.toolbar h1 {
+  font-size: 18px;
+  color: #ffcc66;
+  margin-right: auto;
+}
+.btn {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn:active { transform: scale(0.96); }
+.btn-scan { background: #2196F3; color: #fff; }
+.btn-scan:hover { background: #1e88e5; }
+.btn-sync { background: #4CAF50; color: #fff; }
+.btn-sync:hover { background: #43a047; }
+.btn-stop { background: #f44336; color: #fff; }
+.btn-stop:hover { background: #e53935; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 状态栏 */
+.status-bar {
+  padding: 8px 20px;
+  background: #0d1117;
+  font-size: 12px;
+  color: #8b949e;
+  display: flex;
+  gap: 20px;
+  flex-shrink: 0;
+}
+.status-bar .sync-active { color: #4CAF50; }
+.status-bar .sync-inactive { color: #8b949e; }
+
+/* 主内容区 */
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+/* 客户端分组 */
+.client-group {
+  margin-bottom: 16px;
+  background: #172331;
+  border-radius: 8px;
+  border: 1px solid #2a3a4e;
+  overflow: hidden;
+}
+.client-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: #1c2b3a;
+  border-bottom: 1px solid #2a3a4e;
+  gap: 10px;
+}
+.client-header .name { font-size: 14px; font-weight: 600; color: #e0e6ed; }
+.client-header .url { font-size: 11px; color: #6b7d8e; }
+.client-header .error { font-size: 11px; color: #f44336; }
+.client-header .status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.status-dot.online { background: #4CAF50; }
+.status-dot.offline { background: #f44336; }
+
+/* 窗口列表 */
+.window-list { padding: 4px 0; }
+.window-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  gap: 12px;
+  border-bottom: 1px solid rgba(42,58,78,0.5);
+  transition: background 0.1s;
+}
+.window-item:hover { background: rgba(42,58,78,0.3); }
+.window-item:last-child { border-bottom: none; }
+.window-item.dead { opacity: 0.4; }
+
+/* 复选框样式 */
+.checkbox-wrap {
+  display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;
+}
+.checkbox-wrap input[type="radio"],
+.checkbox-wrap input[type="checkbox"] {
+  width: 16px; height: 16px; cursor: pointer;
+  accent-color: #2196F3;
+}
+
+.window-info { flex: 1; }
+.window-info .ip { font-size: 14px; font-weight: 600; color: #e0e6ed; }
+.window-info .detail { font-size: 11px; color: #6b7d8e; margin-top: 2px; }
+
+.role-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.role-tag.master { background: rgba(255,193,7,0.2); color: #ffc107; }
+.role-tag.slave { background: rgba(33,150,243,0.2); color: #2196F3; }
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #6b7d8e;
+}
+.empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+.empty-state p { font-size: 14px; }
+
+/* 底部同步面板 */
+.sync-panel {
+  flex-shrink: 0;
+  background: #172331;
+  border-top: 1px solid #2a3a4e;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.sync-info { flex: 1; font-size: 13px; }
+.sync-info .master-label { color: #ffc107; font-weight: 600; }
+.sync-info .slave-count { color: #2196F3; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3a4e; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4a5e; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>NoVNC 同步器</h1>
+  <button class="btn btn-scan" id="btnScan" onclick="doScan()">扫描客户端</button>
+  <button class="btn btn-sync" id="btnSync" onclick="doStartSync()" disabled>开始同步</button>
+  <button class="btn btn-stop" id="btnStop" onclick="doStopSync()" disabled style="display:none">停止同步</button>
+</div>
+
+<div class="status-bar">
+  <span id="syncStatus" class="sync-inactive">未同步</span>
+  <span id="scanStatus">等待扫描</span>
+</div>
+
+<div class="main-content" id="mainContent">
+  <div class="empty-state">
+    <div class="icon">&#128270;</div>
+    <p>点击「扫描客户端」发现群控客户端</p>
+  </div>
+</div>
+
+<div class="sync-panel" id="syncPanel" style="display:none">
+  <div class="sync-info">
+    <span class="master-label" id="masterLabel">未设主控</span>
+    <span style="color:#6b7d8e;margin:0 8px">→</span>
+    <span class="slave-count" id="slaveLabel">0 个被控</span>
+  </div>
+</div>
+
+<script>
+let clients = []
+let masterIP = ''
+let slaveIPs = []
+let isSyncing = false
+
+async function doScan () {
+  const btn = document.getElementById('btnScan')
+  btn.disabled = true
+  btn.textContent = '扫描中...'
+  document.getElementById('scanStatus').textContent = '正在扫描...'
+
+  try {
+    const result = await window.syncAPI.scanClients()
+    clients = result
+    renderClients()
+    document.getElementById('scanStatus').textContent =
+      `发现 ${clients.filter(c => !c.error).length}/${clients.length} 个客户端在线`
+  } catch (e) {
+    document.getElementById('scanStatus').textContent = '扫描失败: ' + e.message
+  } finally {
+    btn.disabled = false
+    btn.textContent = '扫描客户端'
+  }
+}
+
+function renderClients () {
+  const container = document.getElementById('mainContent')
+
+  if (clients.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">&#128270;</div><p>点击「扫描客户端」发现群控客户端</p></div>'
+    return
+  }
+
+  let html = ''
+  let allIPs = []
+
+  for (const client of clients) {
+    const isOnline = !client.error && client.windows && client.windows.length > 0
+    html += `<div class="client-group">`
+    html += `<div class="client-header">`
+    html += `<span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>`
+    html += `<span class="name">${escHtml(client.name)}</span>`
+    if (client.groupName) html += `<span class="url">分组: ${escHtml(client.groupName)}</span>`
+    html += `<span class="url">${escHtml(client.apiUrl)}</span>`
+    if (client.error) html += `<span class="error">${escHtml(client.error)}</span>`
+    html += `</div>`
+
+    if (isOnline) {
+      html += `<div class="window-list">`
+      for (const win of client.windows) {
+        const ip = win.controlIP || win.url || ''
+        if (ip) allIPs.push({ ip, client, win })
+        const isMaster = ip === masterIP
+        const isSlave = slaveIPs.includes(ip)
+        const deadClass = !win.alive ? ' dead' : ''
+
+        html += `<div class="window-item${deadClass}">`
+        html += `<label class="checkbox-wrap" title="设为主控">`
+        html += `<input type="radio" name="master" value="${escAttr(ip)}" ${isMaster ? 'checked' : ''} ${!win.alive ? 'disabled' : ''} onchange="setMaster('${escAttr(ip)}')">`
+        html += `主控</label>`
+        html += `<label class="checkbox-wrap" title="设为被控">`
+        html += `<input type="checkbox" ${isSlave ? 'checked' : ''} ${!win.alive || isMaster ? 'disabled' : ''} onchange="toggleSlave('${escAttr(ip)}')">`
+        html += `被控</label>`
+        html += `<div class="window-info">`
+        html += `<div class="ip">${escHtml(ip || '未知IP')}</div>`
+        html += `<div class="detail">窗口${win.index} ${win.title ? '· ' + escHtml(win.title) : ''} ${!win.alive ? '· 已断开' : ''}</div>`
+        html += `</div>`
+        if (isMaster) html += `<span class="role-tag master">主控</span>`
+        else if (isSlave) html += `<span class="role-tag slave">被控</span>`
+        html += `</div>`
+      }
+      html += `</div>`
+    }
+    html += `</div>`
+  }
+
+  container.innerHTML = html
+  updateSyncPanel()
+}
+
+async function setMaster (ip) {
+  // 如果之前的主控IP也在被控列表，移除
+  const result = await window.syncAPI.setMaster(ip)
+  masterIP = result.masterIP
+  slaveIPs = result.slaveIPs
+  renderClients()
+}
+
+async function toggleSlave (ip) {
+  const result = await window.syncAPI.toggleSlave(ip)
+  masterIP = result.masterIP
+  slaveIPs = result.slaveIPs
+  renderClients()
+}
+
+function updateSyncPanel () {
+  const panel = document.getElementById('syncPanel')
+  const btnSync = document.getElementById('btnSync')
+  const btnStop = document.getElementById('btnStop')
+
+  if (masterIP || slaveIPs.length > 0) {
+    panel.style.display = 'flex'
+    document.getElementById('masterLabel').textContent = masterIP ? `主控: ${masterIP}` : '未设主控'
+    document.getElementById('slaveLabel').textContent = `${slaveIPs.length} 个被控`
+  } else {
+    panel.style.display = 'none'
+  }
+
+  btnSync.disabled = !masterIP || slaveIPs.length === 0 || isSyncing
+}
+
+async function doStartSync () {
+  if (!masterIP || slaveIPs.length === 0) return
+  isSyncing = true
+  const result = await window.syncAPI.startSync('', 0)
+  if (result.success) {
+    document.getElementById('syncStatus').textContent = '同步中'
+    document.getElementById('syncStatus').className = 'sync-active'
+    document.getElementById('btnSync').style.display = 'none'
+    document.getElementById('btnStop').style.display = ''
+  }
+  renderClients()
+}
+
+async function doStopSync () {
+  isSyncing = false
+  await window.syncAPI.stopSync()
+  document.getElementById('syncStatus').textContent = '已停止'
+  document.getElementById('syncStatus').className = 'sync-inactive'
+  document.getElementById('btnSync').style.display = ''
+  document.getElementById('btnStop').style.display = 'none'
+  renderClients()
+}
+
+function escHtml (s) {
+  if (!s) return ''
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+function escAttr (s) {
+  return escHtml(s).replace(/'/g, '&#39;')
+}
+
+// 自动扫描
+window.addEventListener('load', () => {
+  setTimeout(doScan, 500)
+})
+</script>
+</body>
+</html>
