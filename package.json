@@ -1,21 +1,18 @@
 {
   "name": "novnc-sync",
   "version": "1.0.0",
-  "description": "NoVNC群控同步器 - 跨客户端同步控制多台设备",
+  "description": "NoVNC同步器 - 跨客户端同步控制，配合novnc-cef-client使用",
   "main": "index.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win",
-    "build:dir": "electron-builder --win --dir"
+    "build:win": "electron-builder --win --x64",
+    "build:win32": "electron-builder --win --ia32"
   },
   "author": "hogan-hong",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1"
-  },
-  "dependencies": {
-    "iconv-lite": "^0.6.3"
   },
   "build": {
     "appId": "com.novnc.sync",
@@ -24,14 +21,29 @@
       "output": "dist"
     },
     "win": {
-      "target": ["portable"],
-      "icon": null
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "NoVNC同步器-${version}-${arch}.exe"
     },
     "files": [
       "index.js",
+      "preload.js",
+      "vnc-preload.js",
       "sync.html",
-      "配置文件.json",
-      "package.json"
+      "package.json",
+      "配置文件.example.json"
+    ],
+    "extraResources": [
+      {
+        "from": "配置文件.example.json",
+        "to": "配置文件.example.json"
+      }
     ]
   }
 }

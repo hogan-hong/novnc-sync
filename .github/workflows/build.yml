@@ -1,5 +1,4 @@
 name: Build Windows
-
 on:
   push:
     branches: [main]
@@ -14,8 +13,8 @@ jobs:
         with:
           node-version: 18
       - run: npm install
-      - run: npm run build
+      - run: npm run build:win
       - uses: actions/upload-artifact@v4
         with:
-          name: novnc-sync-win
-          path: dist/
+          name: NoVNC同步器-win-x64
+          path: dist/*.exe

@@ -3,17 +3,22 @@ const path = require('path')
 const fs = require('fs')
 const http = require('http')
 
+// ========== 坐标常量（与novnc-cef-client一致）==========
+const CLIENT_WIDTH = 856
+const CLIENT_HEIGHT = 480
+const PHONE_WIDTH = 1334
+const PHONE_HEIGHT = 750
+
 // ========== 全局状态 ==========
-let mainWindow = null
-let syncConfig = []       // 同步器配置: [{ name, apiUrl }]
-let clients = []          // 已发现的客户端: [{ name, apiUrl, windows: [...] }]
-let masterIP = ''         // 主控IP
-let slaveIPs = []         // 被控IP列表
-let isSyncing = false     // 是否正在同步
-let syncInterval = null   // 同步轮询定时器
+let controlWindow = null    // 控制面板窗口
+let masterVNCWindow = null  // 主控VNC窗口
+let syncActive = false      // 同步是否激活
+let masterIP = ''           // 主控IP
+let controlledIPs = []      // 被控IP列表
+let clientWindows = {}      // IP → { clientUrl, windowIndex, title } 映射
 
 // ========== 读取配置文件 ==========
-function readSyncConfig () {
+function readConfig () {
   const configArg = process.argv.find(a => a.startsWith('--config='))
   let configPath
   if (configArg) {
@@ -25,38 +30,32 @@ function readSyncConfig () {
     const candidates = [
       path.join(path.dirname(app.getPath('exe')), '配置文件.json'),
       path.join(process.cwd(), '配置文件.json'),
-      path.join(__dirname, '配置文件.json'),
-      path.join(process.resourcesPath || '', '配置文件.json')
-    ].filter(Boolean)
+      path.join(__dirname, '配置文件.json')
+    ]
     configPath = candidates.find(p => fs.existsSync(p)) || candidates[0]
   }
-  console.log(`同步器配置文件路径: ${configPath}`)
+  console.log(`使用配置文件: ${configPath}`)
   if (!fs.existsSync(configPath)) {
-    return null
+    return { error: `配置文件不存在: ${configPath}`, clients: [] }
   }
   try {
     const raw = fs.readFileSync(configPath, 'utf-8')
-    const config = JSON.parse(raw)
-    if (!Array.isArray(config)) throw new Error('配置文件必须是数组')
-    return config
+    const clients = JSON.parse(raw)
+    if (!Array.isArray(clients)) return { error: '配置文件格式错误：需要JSON数组', clients: [] }
+    return { clients }
   } catch (e) {
-    console.error('读取同步器配置失败:', e.message)
-    return null
+    return { error: `读取配置文件失败: ${e.message}`, clients: [] }
   }
 }
 
-// ========== HTTP 请求工具 ==========
+// ========== HTTP请求工具 ==========
 function httpGet (url, timeout = 5000) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, { timeout }, (res) => {
       let data = ''
       res.on('data', chunk => { data += chunk })
       res.on('end', () => {
-        try {
-          resolve(JSON.parse(data))
-        } catch (e) {
-          reject(new Error(`解析JSON失败: ${data.substring(0, 100)}`))
-        }
+        try { resolve(JSON.parse(data)) } catch (e) { reject(new Error(`JSON解析失败: ${e.message}`)) }
       })
     })
     req.on('error', reject)
@@ -64,7 +63,7 @@ function httpGet (url, timeout = 5000) {
   })
 }
 
-function httpPost (url, body, timeout = 5000) {
+function httpPost (url, body, timeout = 3000) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url)
     const postData = JSON.stringify(body)
@@ -73,21 +72,14 @@ function httpPost (url, body, timeout = 5000) {
       port: urlObj.port,
       path: urlObj.pathname,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData)
-      },
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
       timeout
     }
     const req = http.request(options, (res) => {
       let data = ''
       res.on('data', chunk => { data += chunk })
       res.on('end', () => {
-        try {
-          resolve(JSON.parse(data))
-        } catch (e) {
-          resolve({ ok: false })
-        }
+        try { resolve(JSON.parse(data)) } catch (e) { resolve({ success: false }) }
       })
     })
     req.on('error', reject)
@@ -98,186 +90,229 @@ function httpPost (url, body, timeout = 5000) {
 }
 
 // ========== 扫描所有群控客户端 ==========
-async function scanClients () {
+async function scanClients (clients) {
   const results = []
-  for (const cfg of syncConfig) {
+  for (const client of clients) {
     try {
-      const resp = await httpGet(`${cfg.apiUrl}/windows`)
-      if (resp.success) {
+      const data = await httpGet(`${client.apiUrl}/windows`)
+      if (data.success) {
         results.push({
-          name: cfg.name,
-          apiUrl: cfg.apiUrl,
-          groupIndex: resp.groupIndex,
-          groupName: resp.groupName,
-          port: resp.port,
-          windows: resp.windows
+          name: client.name,
+          apiUrl: client.apiUrl,
+          groupIndex: data.groupIndex,
+          groupName: data.groupName,
+          windowCount: data.windowCount,
+          windows: data.windows
         })
       } else {
-        results.push({ name: cfg.name, apiUrl: cfg.apiUrl, error: '返回失败', windows: [] })
+        results.push({ name: client.name, apiUrl: client.apiUrl, error: 'API返回失败', windows: [] })
       }
     } catch (e) {
-      results.push({ name: cfg.name, apiUrl: cfg.apiUrl, error: e.message, windows: [] })
+      results.push({ name: client.name, apiUrl: client.apiUrl, error: e.message, windows: [] })
     }
   }
-  clients = results
   return results
 }
 
-// ========== 同步操作：将主控窗口的命令转发到所有被控窗口 ==========
-async function syncCommand (action, data) {
-  if (!masterIP || slaveIPs.length === 0) return
-  // 找到主控IP所在的客户端
-  const masterClient = clients.find(c => c.windows && c.windows.some(w => w.controlIP === masterIP))
-  if (!masterClient) return
-
-  // 找到每个被控IP所在的客户端，发送命令
-  for (const slaveIP of slaveIPs) {
-    const slaveClient = clients.find(c => c.windows && c.windows.some(w => w.controlIP === slaveIP))
-    if (!slaveClient) continue
-    const slaveWin = slaveClient.windows.find(w => w.controlIP === slaveIP)
-    if (!slaveWin || !slaveWin.alive) continue
-
-    // 通过群控客户端API发送控制命令
-    try {
-      await httpPost(`${slaveClient.apiUrl}/`, {
-        action: data.action,
-        windowIndex: String(slaveWin.index),
-        x: data.x,
-        y: data.y,
-        text: data.text,
-        code: data.code,
-        down: data.down,
-        fromX: data.fromX,
-        fromY: data.fromY,
-        toX: data.toX,
-        toY: data.toY,
-        duration: data.duration,
-        deltaY: data.deltaY,
-        deltaX: data.deltaX
-      })
-    } catch (e) {
-      console.error(`同步到 ${slaveIP} 失败:`, e.message)
+// ========== 构建IP→客户端映射 ==========
+function buildIPMapping (scanResults) {
+  const mapping = {}
+  for (const client of scanResults) {
+    if (client.error || !client.windows) continue
+    for (let i = 0; i < client.windows.length; i++) {
+      const win = client.windows[i]
+      if (win.controlIP) {
+        mapping[win.controlIP] = {
+          clientUrl: client.apiUrl,
+          windowIndex: i + 1,  // 1-based，与novnc-cef-client API一致
+          title: win.title,
+          alive: win.alive
+        }
+      }
     }
   }
+  return mapping
 }
 
-// ========== 创建主窗口 ==========
-function createMainWindow () {
+// ========== 转发事件到被控客户端 ==========
+async function forwardEvent (action, eventData) {
+  const promises = controlledIPs.map(async (ip) => {
+    const mapping = clientWindows[ip]
+    if (!mapping) return
+    const payload = {
+      windowIndex: mapping.windowIndex,
+      action,
+      ...eventData
+    }
+    try {
+      await httpPost(`${mapping.clientUrl}/`, payload)
+    } catch (e) {
+      console.error(`[SYNC] 转发到 ${ip} 失败: ${e.message}`)
+    }
+  })
+  await Promise.allSettled(promises)
+}
+
+// ========== 创建主控VNC窗口 ==========
+function createMasterVNCWindow (ip) {
+  if (masterVNCWindow && !masterVNCWindow.isDestroyed()) {
+    masterVNCWindow.destroy()
+  }
+  const vncUrl = `http://${ip}:5801/vnc_video.html?autoconnect=true&host=${ip}&port=5901&encrypt=0`
   const workArea = screen.getPrimaryDisplay().workAreaSize
-  mainWindow = new BrowserWindow({
-    width: 900,
-    height: 700,
-    x: Math.floor((workArea.width - 900) / 2),
-    y: Math.floor((workArea.height - 700) / 2),
+  // 主控VNC窗口大小：按手机比例，高度占屏幕80%
+  const winH = Math.floor(workArea.height * 0.8)
+  const winW = Math.floor(winH * PHONE_WIDTH / PHONE_HEIGHT)
+
+  masterVNCWindow = new BrowserWindow({
+    width: winW,
+    height: winH,
+    title: `主控 - ${ip}`,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'vnc-preload.js')
+    }
+  })
+  masterVNCWindow.setMenu(null)
+  masterVNCWindow.loadURL(vncUrl)
+
+  masterVNCWindow.on('closed', () => {
+    masterVNCWindow = null
+    if (syncActive) {
+      syncActive = false
+      if (controlWindow && !controlWindow.isDestroyed()) {
+        controlWindow.webContents.send('sync-stopped')
+      }
+    }
+  })
+
+  // 主控窗口获取焦点时通知控制面板
+  masterVNCWindow.on('focus', () => {
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('master-focused')
+    }
+  })
+}
+
+// ========== 坐标转换：主控VNC窗口的canvas坐标 → API坐标(856x480) ==========
+// 主控VNC窗口显示的是手机画面(1334x750)，canvas坐标就是手机坐标
+// API坐标是856x480，所以: apiX = canvasX * 856/1334, apiY = canvasY * 480/750
+function canvasToAPI (canvasX, canvasY, canvasWidth, canvasHeight) {
+  // canvasWidth/canvasHeight 是VNC canvas的实际像素分辨率（=手机分辨率）
+  const apiX = Math.round(canvasX * CLIENT_WIDTH / canvasWidth)
+  const apiY = Math.round(canvasY * CLIENT_HEIGHT / canvasHeight)
+  return { x: apiX, y: apiY }
+}
+
+// ========== 创建控制面板窗口 ==========
+function createControlWindow () {
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  controlWindow = new BrowserWindow({
+    width: 520,
+    height: Math.min(720, workArea.height - 40),
     title: 'NoVNC 同步器',
-    backgroundColor: '#101820',
+    resizable: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     }
   })
-  mainWindow.setMenu(null)
-  mainWindow.loadFile('sync.html')
+  controlWindow.setMenu(null)
+  controlWindow.loadFile('sync.html')
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-    if (syncInterval) { clearInterval(syncInterval); syncInterval = null }
+  controlWindow.on('closed', () => {
+    controlWindow = null
+    if (masterVNCWindow && !masterVNCWindow.isDestroyed()) {
+      masterVNCWindow.destroy()
+    }
+    syncActive = false
+    app.quit()
   })
 }
 
-// ========== IPC 通信 ==========
+// ========== IPC处理 ==========
+// 扫描客户端
 ipcMain.handle('scan-clients', async () => {
-  return await scanClients()
+  const config = readConfig()
+  if (config.error) return { error: config.error }
+  const results = await scanClients(config.clients)
+  clientWindows = buildIPMapping(results)
+  return results
 })
 
-ipcMain.handle('set-master', async (event, ip) => {
-  masterIP = ip
-  if (slaveIPs.includes(ip)) {
-    slaveIPs = slaveIPs.filter(i => i !== ip)
+// 开始同步
+ipcMain.handle('start-sync', async (event, data) => {
+  masterIP = data.masterIP
+  controlledIPs = data.controlledIPs || []
+
+  // 验证主控IP在映射中
+  if (!clientWindows[masterIP]) {
+    return { error: `主控IP ${masterIP} 不在任何群控客户端中` }
   }
-  return { masterIP, slaveIPs }
-})
 
-ipcMain.handle('toggle-slave', async (event, ip) => {
-  if (ip === masterIP) return { masterIP, slaveIPs }
-  if (slaveIPs.includes(ip)) {
-    slaveIPs = slaveIPs.filter(i => i !== ip)
-  } else {
-    slaveIPs.push(ip)
-  }
-  return { masterIP, slaveIPs }
-})
-
-ipcMain.handle('set-slaves', async (event, ips) => {
-  slaveIPs = ips.filter(ip => ip !== masterIP)
-  return { masterIP, slaveIPs }
-})
-
-ipcMain.handle('start-sync', async (event, masterClientUrl, masterWinIndex) => {
-  if (isSyncing) return { success: false, error: '已在同步中' }
-  isSyncing = true
-  // 同步逻辑：轮询主控窗口的操作，转发到被控窗口
-  // 由于novnc-cef-client本身已有主控同步功能（controlMode + masterWindowIndex），
-  // 同步器需要做的是：跨客户端同步
-  // 思路：让主控IP所在的客户端启用controlMode，主控窗口设为master
-  // 然后同步器监听主控窗口的操作，转发到其他客户端的被控窗口
-
-  // 简化方案：直接让主控客户端的控制模式开启，设置master窗口
-  // 被控窗口通过同步器转发命令
+  // 创建主控VNC窗口
+  createMasterVNCWindow(masterIP)
+  syncActive = true
+  console.log(`[SYNC] 开始同步: 主控=${masterIP}, 被控=${controlledIPs.join(',')}`)
   return { success: true }
 })
 
+// 停止同步
 ipcMain.handle('stop-sync', async () => {
-  isSyncing = false
-  if (syncInterval) { clearInterval(syncInterval); syncInterval = null }
+  syncActive = false
+  if (masterVNCWindow && !masterVNCWindow.isDestroyed()) {
+    masterVNCWindow.destroy()
+    masterVNCWindow = null
+  }
+  console.log('[SYNC] 同步已停止')
   return { success: true }
 })
 
-ipcMain.handle('send-command', async (event, data) => {
-  await syncCommand(data.action, data)
-  return { success: true }
-})
+// ★ 主控VNC窗口的事件转发（由vnc-preload.js通过IPC发送）
+ipcMain.on('vnc-event', async (event, data) => {
+  if (!syncActive) return
+  const { action, canvasX, canvasY, canvasWidth, canvasHeight, button, deltaX, deltaY, keyCode, down } = data
 
-ipcMain.handle('refresh-window', async (event, clientUrl, windowIndex) => {
-  try {
-    const resp = await httpPost(`${clientUrl}/refresh`, { windowIndex })
-    return resp
-  } catch (e) {
-    return { ok: false, error: e.message }
+  if (action === 'click' || action === 'rightclick') {
+    const api = canvasToAPI(canvasX, canvasY, canvasWidth, canvasHeight)
+    const clickAction = action === 'rightclick' ? 'rightclick' : 'click'
+    await forwardEvent(clickAction, { x: api.x, y: api.y })
+  } else if (action === 'mousedown' || action === 'mouseup' || action === 'mousemove') {
+    const api = canvasToAPI(canvasX, canvasY, canvasWidth, canvasHeight)
+    await forwardEvent(action, { x: api.x, y: api.y, button })
+  } else if (action === 'scroll') {
+    const api = canvasToAPI(canvasX, canvasY, canvasWidth, canvasHeight)
+    await forwardEvent('scroll', { x: api.x, y: api.y, deltaX: deltaX || 0, deltaY: deltaY || 0 })
+  } else if (action === 'keypress') {
+    await forwardEvent('keypress', { code: keyCode, down })
+  } else if (action === 'drag') {
+    // 拖动需要起点终点
+    const from = canvasToAPI(data.fromCanvasX, data.fromCanvasY, canvasWidth, canvasHeight)
+    const to = canvasToAPI(data.toCanvasX, data.toCanvasY, canvasWidth, canvasHeight)
+    await forwardEvent('drag', {
+      fromX: from.x, fromY: from.y,
+      toX: to.x, toY: to.y,
+      duration: data.duration || 300,
+      mode: data.mode || 'ease'
+    })
   }
 })
 
-ipcMain.handle('get-config', async () => {
-  return { config: syncConfig, masterIP, slaveIPs, isSyncing }
+// 重新读取配置
+ipcMain.handle('reload-config', async () => {
+  return readConfig()
 })
 
 // ========== 启动 ==========
 app.whenReady().then(() => {
-  const config = readSyncConfig()
-  if (!config) {
-    const errWin = new BrowserWindow({
-      width: 600, height: 300, alwaysOnTop: true,
-      webPreferences: { nodeIntegration: false, contextIsolation: true }
-    })
-    errWin.setMenu(null)
-    errWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
-      '<html><head><meta charset="utf-8"><style>' +
-      'body{font-family:"Microsoft YaHei",Arial,sans-serif;margin:0;padding:24px;background:#101820;color:#f4f7fb}' +
-      'h1{font-size:20px;color:#ffcc66}p{line-height:1.8}' +
-      '</style></head><body>' +
-      '<h1>配置文件不存在</h1>' +
-      '<p>请在exe同目录下创建 <b>配置文件.json</b></p>' +
-      '<p>格式示例:</p>' +
-      '<pre style="background:#172331;padding:12px;border-radius:6px">' +
-      '[\n  { "name": "互通一区", "apiUrl": "http://192.168.1.101:38981" },\n  { "name": "互通二区", "apiUrl": "http://192.168.1.102:38982" }\n]' +
-      '</pre></body></html>'
-    ))
-    return
-  }
-  syncConfig = config
-  createMainWindow()
-  app.on('activate', () => { if (!mainWindow) createMainWindow() })
+  createControlWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createControlWindow()
+  })
 })
 
-app.on('window-all-closed', () => { app.quit() })
+app.on('window-all-closed', () => {
+  app.quit()
+})

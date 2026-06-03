@@ -1,15 +1,27 @@
 # NoVNC 同步器
 
-跨客户端同步控制工具，配合 [novnc-cef-client](https://github.com/hogan-hong/novnc-cef-client) 使用。
+基于Electron的NoVNC跨客户端同步控制工具，配合 [novnc-cef-client](https://github.com/hogan-hong/novnc-cef-client) 使用。
 
-当多个 NoVNC 群控客户端同时运行时，同步器可以：
-- 自动发现所有群控客户端及其控制的IP
-- 选择一个IP作为主控，多个IP作为被控
-- 主控窗口的操作会实时同步到所有被控窗口
+## 功能
 
-## 配置
+- 自动读取配置文件中的群控客户端API地址
+- 扫描所有群控客户端，获取其控制的IP列表
+- 可视化选择主控IP和被控IP
+- 用主控IP打开VNC视频窗口，用户的操作自动同步转发到所有被控IP
+- 支持点击、拖动、滚轮、键盘等操作同步
 
-在exe同目录创建 `配置文件.json`：
+## 工作原理
+
+1. 同步器读取 `配置文件.json`，获取所有群控客户端的API地址
+2. 逐个访问群控客户端的 `/windows` API，获取其控制的IP列表
+3. 用户在控制面板中选择一个主控IP和多个被控IP
+4. 点击"开始同步"后，用主控IP构建VNC视频地址，打开主控VNC窗口
+5. 用户在主控VNC窗口上的所有操作（鼠标、键盘）都会被捕获
+6. 操作坐标经过转换后，通过各群控客户端的API转发给被控窗口
+
+## 配置文件
+
+在exe同目录下创建 `配置文件.json`，格式为JSON数组：
 
 ```json
 [
@@ -18,23 +30,18 @@
 ]
 ```
 
-- `name`：客户端名称（自定义）
-- `apiUrl`：群控客户端的API地址，端口 = 38980 + 组号
+- `name`: 客户端名称（用于显示）
+- `apiUrl`: 群控客户端的API地址（novnc-cef-client的HTTP API端口，格式为 `http://IP:3898X`）
 
-## 使用
+## 依赖
 
-1. 先启动所有 NoVNC 群控客户端
-2. 启动同步器，自动扫描发现客户端
-3. 选择一个IP勾选「主控」，其他IP勾选「被控」
-4. 点击「开始同步」
+- novnc-cef-client 需要升级到支持 `/windows` API的版本
 
 ## 构建
 
 ```bash
 npm install
-npm run build
+npm run build:win
 ```
 
-## 依赖
-
-- novnc-cef-client v1.3+（需 `/windows` API端点）
+生成的exe在 `dist/` 目录。
