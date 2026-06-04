@@ -162,7 +162,7 @@ function createMasterVNCWindow (ip) {
 
   const workArea = screen.getPrimaryDisplay().workAreaSize
   const masterW = 1334
-  const masterH = 778  // 750画面 + 28标题栏
+  const masterH = 750
 
   // ★ 计算主控窗口位置：居中
   const masterX = Math.floor((workArea.width - masterW) / 2)
@@ -298,6 +298,15 @@ ipcMain.handle('stop-sync', async () => {
     masterVNCWindow.destroy()
     masterVNCWindow = null
   }
+  // ★ 停止同步后控制面板重新居中
+  if (controlWindow && !controlWindow.isDestroyed()) {
+    const workArea = screen.getPrimaryDisplay().workAreaSize
+    const bounds = controlWindow.getBounds()
+    controlWindow.setBounds({
+      x: Math.floor((workArea.width - bounds.width) / 2),
+      y: Math.floor((workArea.height - bounds.height) / 2)
+    })
+  }
   console.log('[SYNC] 同步已停止')
   return { success: true }
 })
@@ -335,20 +344,6 @@ ipcMain.on('vnc-event', async (event, data) => {
 // 重新读取配置
 ipcMain.handle('reload-config', async () => {
   return readConfig()
-})
-
-// ★ 关闭主控VNC窗口
-ipcMain.on('close-master-vnc', () => {
-  if (masterVNCWindow && !masterVNCWindow.isDestroyed()) {
-    masterVNCWindow.destroy()
-    masterVNCWindow = null
-  }
-  if (syncActive) {
-    syncActive = false
-    if (controlWindow && !controlWindow.isDestroyed()) {
-      controlWindow.webContents.send('sync-stopped')
-    }
-  }
 })
 
 // ========== 启动 ==========
