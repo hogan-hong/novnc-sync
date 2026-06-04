@@ -77,11 +77,11 @@
     }
     .client-header {
       background: #252d3d;
-      padding: 5px 10px;
+      padding: 4px 8px;
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 12px;
+      gap: 5px;
+      font-size: 11px;
       font-weight: 600;
     }
     .client-header .dot {
@@ -103,49 +103,55 @@
     .ip-row {
       display: flex;
       align-items: center;
-      padding: 3px 10px;
-      gap: 6px;
+      padding: 2px 8px;
+      gap: 4px;
       transition: background 0.15s;
     }
     .ip-row:hover { background: #222b3d; }
     .ip-row.disabled { opacity: 0.4; }
 
     .ip-row .col-master {
-      width: 16px;
+      width: 14px;
+      flex-shrink: 0;
       display: flex;
       align-items: center;
     }
     .ip-row .col-master input[type="radio"] {
       accent-color: #ffcc66;
-      width: 12px; height: 12px;
+      width: 11px; height: 11px;
       cursor: pointer;
     }
 
     .ip-row .col-ctrl {
-      width: 16px;
+      width: 14px;
+      flex-shrink: 0;
       display: flex;
       align-items: center;
     }
     .ip-row .col-ctrl input[type="checkbox"] {
       accent-color: #22c55e;
-      width: 12px; height: 12px;
+      width: 11px; height: 11px;
       cursor: pointer;
     }
 
     .ip-row .col-ip {
       font-family: "Consolas", "Courier New", monospace;
-      font-size: 11px;
+      font-size: 10px;
       color: #c8d6e5;
-      min-width: 0;
+      width: 95px;
+      flex-shrink: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .ip-row .col-title {
-      margin-left: auto;
       font-size: 10px;
       color: #6b7fa3;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      max-width: 100px;
+      flex: 1;
+      min-width: 0;
     }
 
     .ip-row.is-master .col-ip { color: #ffcc66; font-weight: 600; }
