@@ -159,14 +159,10 @@ function createMasterVNCWindow (ip) {
     masterVNCWindow.destroy()
   }
   const vncUrl = `http://${ip}:5801/vnc_video.html?autoconnect=true&host=${ip}&port=5901&encrypt=0`
-  const workArea = screen.getPrimaryDisplay().workAreaSize
-  // 主控VNC窗口大小：按手机比例，高度占屏幕80%
-  const winH = Math.floor(workArea.height * 0.8)
-  const winW = Math.floor(winH * PHONE_WIDTH / PHONE_HEIGHT)
 
   masterVNCWindow = new BrowserWindow({
-    width: winW,
-    height: winH,
+    width: 1334,
+    height: 750,
     title: `主控 - ${ip}`,
     webPreferences: {
       nodeIntegration: false,

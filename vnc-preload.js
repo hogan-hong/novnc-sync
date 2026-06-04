@@ -45,6 +45,11 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ★ 直接用ipcRenderer发送事件（不用window.vncCapture，preload隔离上下文访问不到）
+  function sendEvent (data) {
+    ipcRenderer.send('vnc-event', data)
+  }
+
   function setupCapture () {
     if (captureActive) return
     const canvas = findCanvas()
@@ -66,7 +71,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
       // 先发mousedown给被控端（用于拖动开始）
       if (e.button === 0) {  // 左键
-        window.vncCapture.sendEvent({
+        sendEvent({
           action: 'mousedown',
           ...coords,
           button: 'left'
@@ -98,7 +103,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
       if (mouseDownPos && isDragging) {
         // 拖动结束
-        window.vncCapture.sendEvent({
+        sendEvent({
           action: 'drag',
           fromCanvasX: mouseDownPos.x,
           fromCanvasY: mouseDownPos.y,
@@ -112,7 +117,7 @@ window.addEventListener('DOMContentLoaded', () => {
       } else if (mouseDownPos) {
         // 普通点击
         const clickAction = e.button === 2 ? 'rightclick' : 'click'
-        window.vncCapture.sendEvent({
+        sendEvent({
           action: clickAction,
           ...coords
         })
@@ -120,7 +125,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
       // 发mouseup给被控端
       if (e.button === 0) {
-        window.vncCapture.sendEvent({
+        sendEvent({
           action: 'mouseup',
           ...coords,
           button: 'left'
@@ -138,7 +143,7 @@ window.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('wheel', (e) => {
       const coords = getCanvasCoords(e)
       if (!coords) return
-      window.vncCapture.sendEvent({
+      sendEvent({
         action: 'scroll',
         ...coords,
         deltaX: Math.round(e.deltaX / 50),
@@ -150,7 +155,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // ★ 键盘事件（在document上监听）
   // 注意：不阻止事件传播，让主控VNC也能接收到键盘输入
   document.addEventListener('keydown', (e) => {
-    window.vncCapture.sendEvent({
+    sendEvent({
       action: 'keypress',
       keyCode: e.code,
       down: true,
@@ -160,7 +165,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }, true)
 
   document.addEventListener('keyup', (e) => {
-    window.vncCapture.sendEvent({
+    sendEvent({
       action: 'keypress',
       keyCode: e.code,
       down: false,
