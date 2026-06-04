@@ -160,9 +160,20 @@ function createMasterVNCWindow (ip) {
   }
   const vncUrl = `http://${ip}:5801/vnc_video.html?autoconnect=true&host=${ip}&port=5901&encrypt=0`
 
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  const masterW = 1334
+  const masterH = 778  // 750画面 + 28标题栏
+
+  // ★ 计算主控窗口位置：居中
+  const masterX = Math.floor((workArea.width - masterW) / 2)
+  const masterY = Math.floor((workArea.height - masterH) / 2)
+
   masterVNCWindow = new BrowserWindow({
-    width: 1334,
-    height: 750,
+    width: masterW,
+    height: masterH,
+    x: masterX,
+    y: masterY,
+    frame: false,          // ★ 隐藏标题栏
     title: `主控 - ${ip}`,
     webPreferences: {
       nodeIntegration: false,
@@ -172,6 +183,31 @@ function createMasterVNCWindow (ip) {
   })
   masterVNCWindow.setMenu(null)
   masterVNCWindow.loadURL(vncUrl)
+
+  // ★ 控制面板自动移到主控窗口旁边
+  if (controlWindow && !controlWindow.isDestroyed()) {
+    const ctrlBounds = controlWindow.getBounds()
+    const ctrlW = ctrlBounds.width
+    const ctrlH = ctrlBounds.height
+
+    // 优先放右边，右边放不下就放左边
+    const rightX = masterX + masterW
+    const leftX = masterX - ctrlW
+
+    let ctrlX, ctrlY
+    if (rightX + ctrlW <= workArea.width) {
+      // 放右边
+      ctrlX = rightX
+    } else if (leftX >= 0) {
+      // 放左边
+      ctrlX = leftX
+    } else {
+      // 两边都放不下，放右边让其超出一点
+      ctrlX = rightX
+    }
+    ctrlY = Math.max(0, Math.floor((workArea.height - ctrlH) / 2))
+    controlWindow.setBounds({ x: ctrlX, y: ctrlY, width: ctrlW, height: ctrlH })
+  }
 
   masterVNCWindow.on('closed', () => {
     masterVNCWindow = null
@@ -299,6 +335,20 @@ ipcMain.on('vnc-event', async (event, data) => {
 // 重新读取配置
 ipcMain.handle('reload-config', async () => {
   return readConfig()
+})
+
+// ★ 关闭主控VNC窗口
+ipcMain.on('close-master-vnc', () => {
+  if (masterVNCWindow && !masterVNCWindow.isDestroyed()) {
+    masterVNCWindow.destroy()
+    masterVNCWindow = null
+  }
+  if (syncActive) {
+    syncActive = false
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('sync-stopped')
+    }
+  }
 })
 
 // ========== 启动 ==========

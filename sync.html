@@ -359,7 +359,7 @@
 
       document.querySelectorAll('.col-ctrl input:checked').forEach(cb => {
         const row = cb.closest('.ip-row')
-        if (row && cb.value !== masterIP) row.classList.add('is-controlled')
+        if (row) row.classList.add('is-controlled')
       })
 
       updateStartButton()
@@ -377,14 +377,15 @@
 
       const masterIP = masterRadio.value
       const ctrlChecks = document.querySelectorAll('.col-ctrl input:checked')
-      const controlledIPs = Array.from(ctrlChecks).map(cb => cb.value).filter(ip => ip !== masterIP)
+      const controlledIPs = Array.from(ctrlChecks).map(cb => cb.value)
 
       if (controlledIPs.length === 0) {
-        log('请至少选择一个被控IP（不能与主控相同）', 'warn')
+        log('请至少选择一个被控IP', 'warn')
         return
       }
 
-      log(`开始同步: 主控=${masterIP}, 被控=[${controlledIPs.join(', ')}]`)
+      const masterAlsoControlled = controlledIPs.includes(masterIP)
+      log(`开始同步: 主控=${masterIP}, 被控=[${controlledIPs.join(', ')}]${masterAlsoControlled ? ' (主控也接收同步)' : ''}`)
 
       try {
         const result = await window.syncAPI.startSync({

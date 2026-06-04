@@ -174,6 +174,37 @@ window.addEventListener('DOMContentLoaded', () => {
     })
   }, true)
 
+  // ★ 注入无标题栏的顶部控制条（拖拽移动 + 关闭按钮）
+  function injectTitlebar () {
+    const existing = document.getElementById('__sync_titlebar')
+    if (existing) return
+
+    const bar = document.createElement('div')
+    bar.id = '__sync_titlebar'
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:28px;z-index:9999999;display:flex;align-items:center;justify-content:flex-end;background:rgba(0,0,0,0.6);-webkit-app-region:drag;'
+
+    const closeBtn = document.createElement('div')
+    closeBtn.style.cssText = 'width:36px;height:28px;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:16px;font-family:Arial,sans-serif;cursor:pointer;-webkit-app-region:no-drag;transition:background 0.15s;'
+    closeBtn.textContent = '✕'
+    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = '#e81123'; closeBtn.style.color = '#fff' })
+    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = '#ccc' })
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      e.preventDefault()
+      ipcRenderer.send('close-master-vnc')
+    }, true)
+
+    bar.appendChild(closeBtn)
+    document.body.appendChild(bar)
+
+    // 让VNC内容下移28px避免被遮挡
+    const screenEl = document.getElementById('screen')
+    if (screenEl) screenEl.style.marginTop = '28px'
+  }
+
+  // 注入标题栏
+  setTimeout(injectTitlebar, 1000)
+
   // 等canvas出现
   setTimeout(setupCapture, 2000)
 })
