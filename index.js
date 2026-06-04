@@ -346,6 +346,17 @@ ipcMain.handle('reload-config', async () => {
   return readConfig()
 })
 
+// ★ 根据内容高度自动调整窗口大小（不超过屏幕）
+ipcMain.handle('resize-to-fit', async (event, contentHeight) => {
+  if (!controlWindow || controlWindow.isDestroyed()) return
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  const maxHeight = workArea.height - 40
+  // contentHeight + 窗口边框(约30px)
+  const desiredH = Math.min(contentHeight + 30, maxHeight)
+  const bounds = controlWindow.getBounds()
+  controlWindow.setSize(bounds.width, desiredH)
+})
+
 // ========== 启动 ==========
 app.whenReady().then(() => {
   createControlWindow()
