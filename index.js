@@ -241,7 +241,7 @@ function canvasToAPI (canvasX, canvasY, canvasWidth, canvasHeight) {
 function createControlWindow () {
   const workArea = screen.getPrimaryDisplay().workAreaSize
   controlWindow = new BrowserWindow({
-    width: 520,
+    width: 660,
     height: Math.min(720, workArea.height - 40),
     title: 'NoVNC 同步器',
     resizable: true,
