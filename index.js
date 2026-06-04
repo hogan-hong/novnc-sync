@@ -351,10 +351,12 @@ ipcMain.handle('resize-to-fit', async (event, contentHeight) => {
   if (!controlWindow || controlWindow.isDestroyed()) return
   const workArea = screen.getPrimaryDisplay().workAreaSize
   const maxHeight = workArea.height - 40
-  // contentHeight + 窗口边框(约30px)
   const desiredH = Math.min(contentHeight + 30, maxHeight)
   const bounds = controlWindow.getBounds()
-  controlWindow.setSize(bounds.width, desiredH)
+  // 调整大小并居中
+  const newX = Math.floor((workArea.width - bounds.width) / 2)
+  const newY = Math.floor((workArea.height - desiredH) / 2)
+  controlWindow.setBounds({ x: newX, y: newY, width: bounds.width, height: desiredH })
 })
 
 // ========== 启动 ==========
